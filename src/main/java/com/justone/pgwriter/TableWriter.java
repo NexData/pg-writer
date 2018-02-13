@@ -35,6 +35,9 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import org.postgresql.core.BaseConnection;//PostgreSQL database connection
 import org.postgresql.copy.CopyManager;//PostgreSQL copy manager
+import org.postgresql.jdbc.PgConnection;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * <P>
@@ -82,6 +85,8 @@ import org.postgresql.copy.CopyManager;//PostgreSQL copy manager
  * 
  */
 public class TableWriter implements Appendable, Flushable, Closeable {
+
+  private static final Logger fLog = LoggerFactory.getLogger(TableWriter.class);
   
   /**
    * Database driver name
@@ -188,32 +193,32 @@ public class TableWriter implements Appendable, Flushable, Closeable {
     if ((aHost==null)||(aHost.length()==0)) {//if no host string specified
       aHost=DEFAULT_HOST;//use local host and default port
     }//if no host string specified
-    
-    /* convert column name array to comma delimited column string */
-    StringBuilder columns=new StringBuilder();//buffer for string construction
-    columns.append(aColumnNames[0]);//append first column name
-    for (int i=1;i<aColumnNames.length;++i) {//for each subsequent column
-      columns.append(',');//append column delimiter
-      columns.append(aColumnNames[i]);//append column name
-    }//for each subsequent column
-    
-    /* construct copy command */
-    String copyCommand=COPY_TEMPLATE;//start with command template    
-    copyCommand=copyCommand.replace(TABLE_TOKEN, aTableName);//replace table name
-    copyCommand=copyCommand.replace(COLUMNS_TOKEN, columns.toString());//replace column list
-    
-    fCapacity=aCapacity;//set buffer capacity
-    fBuffer=new StringBuilder(fCapacity);//create buffer    
-    fLastColumnNo=aColumnNames.length-1;//set last column number
-    iColumnNo=0;//initialise column number
-    iWatermark=0;//initialise watermark
-    fCopyCommand=copyCommand;//set copy command
 
     try {
       
       /* open database connection */
       String database=JDBC_PREFIX+aHost+"/"+aDatabase;//construct database connection string
       fConnection = DriverManager.getConnection(database, aUsername, aPassword);//open connection to the database
+
+      /* convert column name array to comma delimited column string */
+      StringBuilder columns=new StringBuilder();//buffer for string construction
+      columns.append(aColumnNames[0]);//append first column name
+      for (int i=1;i<aColumnNames.length;++i) {//for each subsequent column
+        columns.append(',');//append column delimiter
+        columns.append(aColumnNames[i]);//append column name
+      }//for each subsequent column
+
+      /* construct copy command */
+      String copyCommand=COPY_TEMPLATE;//start with command template
+      copyCommand=copyCommand.replace(TABLE_TOKEN, aTableName + "_" + ((PgConnection) fConnection).getBackendPID());//replace table name
+      copyCommand=copyCommand.replace(COLUMNS_TOKEN, columns.toString());//replace column list
+
+      fCapacity=aCapacity;//set buffer capacity
+      fBuffer=new StringBuilder(fCapacity);//create buffer
+      fLastColumnNo=aColumnNames.length-1;//set last column number
+      iColumnNo=0;//initialise column number
+      iWatermark=0;//initialise watermark
+      fCopyCommand=copyCommand;//set copy command
    
       /* set instance finals */
       fCopyManager=new CopyManager((BaseConnection) fConnection);//construct copy manager
@@ -289,7 +294,8 @@ public class TableWriter implements Appendable, Flushable, Closeable {
       fBuffer.append(COLUMN_DELIMITER);//append column delimiter
       ++iColumnNo;//increment column number
     }//if row is complete
-    
+
+    fLog.trace("Writer next() with {}/{} at {}", fBuffer.length(), fCapacity, iWatermark);
     /* flush buffer if full */
     if (fBuffer.length()>fCapacity) {//if buffer size exceeds capacity
       flush();//flush buffer
@@ -338,6 +344,7 @@ public class TableWriter implements Appendable, Flushable, Closeable {
 
     if (iWatermark>0) {//if complete rows pending
       try {
+        fLog.trace("Writer flush() execute {}/{} at {}", fBuffer.length(), fCapacity, iWatermark);
         fCopyManager.copyIn(fCopyCommand, new StringReader(fBuffer.substring(0,iWatermark).toString()));//copy complete rows to the database
         fBuffer.delete(0, iWatermark);//remove written rows from the buffer
         iWatermark=0;//reset watermark

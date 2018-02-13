@@ -26,13 +26,11 @@ SOFTWARE.
 
 package com.justone.pgwriter;
 
-import java.io.IOException;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import junit.framework.TestCase;
+import org.postgresql.jdbc.PgConnection;
+
+import java.io.IOException;
+import java.sql.*;
 
 /**
  * Test for TableWriter
@@ -57,7 +55,11 @@ public class TableWriterTest extends TestCase {
    * Password for database user authentication
    */
   private final static String PASSWORD="postgres";
-  
+  /**
+   * Table name to use while testing
+   */
+  private static final String TABLE = "pgwriter";
+
   /**
    * Database connection used for database operations
    */
@@ -70,6 +72,8 @@ public class TableWriterTest extends TestCase {
    * Writer instance used for testing
    */
   private static TableWriter writer;
+
+  private static String scopedTableName;
   
   
   public TableWriterTest(String testName) {
@@ -83,25 +87,26 @@ public class TableWriterTest extends TestCase {
     
         /* load driver */
     Class.forName("org.postgresql.Driver");//attempt to load database driver
- 
-    /* open database connection */
-    connection = DriverManager.getConnection("jdbc:postgresql://"+HOST+"/"+DATABASE, USER, PASSWORD);//open connection to the database
-    
-    /* create table for tests */
-    statement=connection.createStatement();
-    statement.executeUpdate("CREATE TABLE IF NOT EXISTS pgwriter (A VARCHAR, B VARCHAR)");
-         
-    /* truncate the table */
-    statement.executeUpdate("TRUNCATE TABLE pgwriter");
- 
+
     /* create writer for test */
     writer=new TableWriter(HOST, //host name
-                           DATABASE, //database name
-                           USER, //user to connect with
-                           PASSWORD, //password to authenticate with
-                           "pgwriter", //name of table to write to 
-                           new String[]{"A","B"}, //name of columns to write to
-                           64*1024); //buffer size
+            DATABASE, //database name
+            USER, //user to connect with
+            PASSWORD, //password to authenticate with
+            TABLE, //name of table to write to
+            new String[]{"A","B"}, //name of columns to write to
+            64*1024); //buffer size
+ 
+    /* open database connection */
+    connection = writer.getConnection();
+    scopedTableName = TABLE + "_" + ((PgConnection) connection).getBackendPID();
+
+    /* create table for tests */
+    statement=connection.createStatement();
+    statement.executeUpdate("CREATE TABLE IF NOT EXISTS " + scopedTableName + " (A VARCHAR, B VARCHAR)");
+         
+    /* truncate the table */
+    statement.executeUpdate("TRUNCATE TABLE " + scopedTableName);
  
         
   }//setUp
@@ -109,16 +114,15 @@ public class TableWriterTest extends TestCase {
   @Override
   protected void tearDown() throws Exception {
     super.tearDown();
-    
-    /* close writer */
-    writer.close();
+
+    /* flish writer */
+    writer.flush();
     
     /* drop table */
-    statement.executeUpdate("DROP TABLE IF EXISTS pgwriter");
-    
-    /* close database connection */
-    connection.close();
+    statement.executeUpdate("DROP TABLE IF EXISTS " + scopedTableName);
 
+    /* close writer */
+    writer.close();
     
   }//tearDown
 
@@ -163,7 +167,7 @@ public class TableWriterTest extends TestCase {
     writer.flush();
     
     /* check rows in the table */
-    ResultSet resultSet = statement.executeQuery("SELECT A,B FROM pgwriter");
+    ResultSet resultSet = statement.executeQuery("SELECT A,B FROM " + scopedTableName);
 
     /* check first row */
     boolean found=resultSet.next();
@@ -215,21 +219,21 @@ public class TableWriterTest extends TestCase {
     writer.flush();
     
     /* check no rows in the table */
-    ResultSet resultSet = statement.executeQuery("SELECT A,B FROM pgwriter");
+    ResultSet resultSet = statement.executeQuery("SELECT A,B FROM " + scopedTableName);
     boolean found=resultSet.next();
     assertEquals(false, found);
 
     writer.next();
     
     /* check no rows in the table */
-    resultSet = statement.executeQuery("SELECT A,B FROM pgwriter");
+    resultSet = statement.executeQuery("SELECT A,B FROM " + scopedTableName);
     found=resultSet.next();
     assertEquals(false, found);
     
     writer.flush();
     
     /* check row is in the table */
-    resultSet = statement.executeQuery("SELECT A,B FROM pgwriter");
+    resultSet = statement.executeQuery("SELECT A,B FROM " + scopedTableName);
     found=resultSet.next();
     assertEquals(true, found);
         
@@ -244,7 +248,7 @@ public class TableWriterTest extends TestCase {
     writer.flush();
 
     /* check there are only two rows in the table */
-    resultSet = statement.executeQuery("SELECT count(*) FROM pgwriter");
+    resultSet = statement.executeQuery("SELECT count(*) FROM " + scopedTableName);
     resultSet.next();
     int count=resultSet.getInt(1);
 
@@ -353,7 +357,7 @@ public class TableWriterTest extends TestCase {
     System.out.println("getConnection");
     
     /* execute query via writer connection */
-    ResultSet resultSet = writer.getConnection().createStatement().executeQuery("SELECT count(*) FROM pgwriter");
+    ResultSet resultSet = writer.getConnection().createStatement().executeQuery("SELECT count(*) FROM " + scopedTableName);
     boolean found=resultSet.next();
     assertEquals(true, found);
 
